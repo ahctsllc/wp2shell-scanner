@@ -20,14 +20,17 @@ import base64
 import concurrent.futures as cf
 import hashlib
 import html as html_mod
+import http.client
 import http.cookiejar as cookiejar
 import io
 import json
 import re
 import secrets
 import shlex
+import socket
 import ssl
 import statistics
+import struct
 import sys
 import time
 import urllib.error
@@ -41,6 +44,7 @@ UA = "wp2shell-rce/1.0"
 TIMEOUT = 15
 DEFAULT_DELAY = 0.15
 DEFAULT_TIMEOUT = 15
+DEFAULT_TOR_SOCKS = "127.0.0.1:9050"
 
 BANNER = r"""
   _____          _         ____
