@@ -8,8 +8,9 @@ REST `/batch/v1` route is reachable without sending an exploit payload; the
 PoC for authorized lab use.
 
 `wp2shell.py` is a single, standard-library-only script — no external
-dependencies. Every invocation prints a **ZephrSec** banner to stderr before it
-runs (it stays off stdout, so `--scan -j` JSON output is unaffected).
+dependencies (SOCKS5/Tor support is implemented in-tree, no PySocks). Every
+invocation prints a **ZephrSec** banner to stderr before it runs (it stays off
+stdout, so `--scan -j` JSON output is unaffected).
 
 ## Command flags
 
@@ -24,8 +25,8 @@ wp2shell.py (--scan | --check | --read | --shell | --rce | --root-prereq)
             [--delay DELAY] [--repeats REPEATS] [--preset PRESET] [--expr EXPR]
             [--max-len MAX_LEN] [--user USER] [--password PASSWORD] [--cmd CMD]
             [-i] [--no-cleanup] [-y] [--sleep SLEEP] [--rounds ROUNDS]
-            [--route {auto,rest-route,wp-json}] [--proxy PROXY] [--authorized]
-            [--timeout TIMEOUT]
+            [--route {auto,rest-route,wp-json}] [--proxy PROXY] [--tor]
+            [--tor-socks HOST:PORT] [--authorized] [--timeout TIMEOUT]
 ```
 
 ### Mode flags (pick one)
@@ -45,7 +46,7 @@ wp2shell.py (--scan | --check | --read | --shell | --rce | --root-prereq)
 | --- | --- | --- |
 | `-f`, `--file` | `--scan` | Read hosts from a file (one per line; `#` comments skipped). |
 | `-j`, `--json` | `--scan` | Emit results as JSON on stdout. |
-| `-t`, `--threads` | `--scan` | Scan concurrency (default 10). |
+| `-t`, `--threads` | `--scan` | Scan concurrency (default 10; forced to 1 when routing via Tor). |
 | `--prefix` | `--check`/`--read` | DB table prefix (default `wp_`). |
 | `--delay` | `--check`/`--read` | Injected `SLEEP` seconds for the timing oracle (default 0.15). |
 | `--repeats` | `--check`/`--read` | Median over N probes per bit; raise on noisy links (default 1). |
@@ -61,9 +62,11 @@ wp2shell.py (--scan | --check | --read | --shell | --rce | --root-prereq)
 | `--sleep` | `--rce` | Injected `SLEEP` seconds for pre-auth SQLi detection (default 4). |
 | `--rounds` | `--rce` | Median over N probes for `--rce` detection (default 3). |
 | `--route` | `--rce` | Batch route form: `auto`, `rest-route`, or `wp-json` (default `auto`). |
-| `--proxy` | `--rce` | Route requests through an HTTP proxy, e.g. Burp at `http://127.0.0.1:8080`. |
+| `--proxy` | all | Route requests through a proxy. HTTP(S) for Burp (`http://127.0.0.1:8080`) or SOCKS5h for Tor (`socks5h://127.0.0.1:9050`). SOCKS always uses remote DNS so `.onion` names resolve inside Tor. |
+| `--tor` | all | Shortcut for SOCKS5h at `--tor-socks` (default `127.0.0.1:9050`). Implied automatically when any target is a `.onion` host. Mutually exclusive with `--proxy`. |
+| `--tor-socks` | all | Tor SOCKS listen address (`HOST:PORT`). Default `127.0.0.1:9050`. Use `127.0.0.1:9150` if you are using Tor Browser's SOCKS port. |
 | `--authorized` | `--rce` | Assert authorization for a non-loopback `--rce` target (required for remote hosts). |
-| `--timeout` | all | Per-request timeout in seconds (default 15). |
+| `--timeout` | all | Per-request timeout in seconds (default 15; raised to 60 automatically for Tor / `.onion` unless you set it yourself). |
 
 Deep dive blog post: https://blog.zsec.uk/wp2shell-code-trace-deep-dive/
 
@@ -84,7 +87,47 @@ python3 wp2shell.py --scan -f hosts.txt
 ```
 
 Options: `-f/--file` hosts file (one per line), `-j/--json` JSON output,
-`-t/--threads` concurrency (default 10).
+`-t/--threads` concurrency (default 10; forced to 1 when routing via Tor).
+
+## Tor / `.onion` targets
+
+Hidden-service hostnames are not in public DNS. This script speaks SOCKS5h
+directly (stdlib only) so the destination name is sent to Tor for resolution.
+
+Install and start system Tor on macOS:
+
+```
+brew install tor
+brew services start tor
+```
+
+Confirm the SOCKS listener and remote DNS before scanning:
+
+```
+curl -sS --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip
+```
+
+Then point the scanner at the onion. `--tor` is optional for `.onion` URLs;
+it is turned on automatically. Prefer an explicit `http://` scheme (the
+default scheme for a scheme-less `.onion` is `http://`, not `https://`).
+
+```
+python3 wp2shell.py --scan http://xxxxxxxxxxxxxxxx.onion
+python3 wp2shell.py --scan --tor http://xxxxxxxxxxxxxxxx.onion
+python3 wp2shell.py --scan --tor-socks 127.0.0.1:9150 http://xxxxxxxxxxxxxxxx.onion
+python3 wp2shell.py --scan --proxy socks5h://127.0.0.1:9050 http://xxxxxxxxxxxxxxxx.onion
+python3 wp2shell.py --check --tor http://xxxxxxxxxxxxxxxx.onion
+```
+
+`--proxy` still accepts a Burp-style HTTP proxy on every mode, including
+`--scan` / `--check` / `--read` / `--shell` / `--rce`:
+
+```
+python3 wp2shell.py --scan --proxy http://127.0.0.1:8080 https://target
+```
+
+Do not combine `--tor` with `--proxy`. If Tor is not running the scan reports
+the host as `unreachable` instead of crashing.
 
 ## Validation PoC
 
